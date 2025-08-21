@@ -1,0 +1,139 @@
+```lua
+_G.Settings = {
+    ShowNames = true, -- Show player names
+    ShowDistance = true -- Show distance
+}
+
+local RunService = game:GetService("RunService")
+local Players = game:GetService("Players")
+local LocalPlayer = Players.LocalPlayer
+
+-- Function to create BillboardGui and Highlight for ESP
+local function createESP(player)
+    local billboard = Instance.new("BillboardGui")
+    billboard.Size = UDim2.new(0, 200, 0, 50)
+    billboard.AlwaysOnTop = true -- Ensure visibility through objects
+    billboard.StudsOffset = Vector3.new(0, 3.5, 0) -- Position above head
+    billboard.MaxDistance = 3000 -- Limit display distance
+
+    local textLabel = Instance.new("TextLabel")
+    textLabel.Size = UDim2.new(1, 0, 1, 0)
+    textLabel.BackgroundTransparency = 1
+    textLabel.Font = Enum.Font.SourceSansBold
+    textLabel.TextSize = 14 -- Larger text for visibility
+    -- Set text color based on team (red for enemies, green for teammates)
+    if player.Team == LocalPlayer.Team then
+        textLabel.TextColor3 = Color3.new(0, 1, 0) -- Green for teammates
+    else
+        textLabel.TextColor3 = Color3.new(1, 0, 0) -- Red for enemies
+    end
+    textLabel.Text = player.Name
+    textLabel.Parent = billboard
+
+    local highlight = Instance.new("Highlight")
+    highlight.FillColor = Color3.new(0, 1, 0) -- Green fill
+    highlight.OutlineColor = Color3.new(0, 1, 0) -- Green outline
+    highlight.FillTransparency = 0.2 -- Lower transparency for solid, fleshy appearance
+    highlight.OutlineTransparency = 0.1 -- Clear outline
+    highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop -- Render through objects
+
+    return billboard, textLabel, highlight
+end
+
+-- Create ESP for each player
+local billboards = {}
+
+for _, player in ipairs(Players:GetPlayers()) do
+    if player ~= LocalPlayer and player.Character then
+        local humanoidRootPart = player.Character:WaitForChild("HumanoidRootPart", 5)
+        if humanoidRootPart then
+            local billboard, label, highlight = createESP(player)
+            billboard.Adornee = humanoidRootPart
+            billboard.Parent = player.Character
+            highlight.Adornee = player.Character
+            highlight.Parent = player.Character
+            billboards[player] = { billboard = billboard, label = label, highlight = highlight }
+            print("Created ESP for player: " .. player.Name .. " (Team: " .. (player.Team and player.Team.Name or "No Team") .. ")")
+        else
+            print("Failed to find HumanoidRootPart for player: " .. player.Name)
+        end
+    end
+end
+
+-- Function to update ESP
+local function updateBillboards()
+    for player, data in pairs(billboards) do
+        if player.Character and player.Character:FindFirstChild("HumanoidRootPart") then
+            local humanoidRootPart = player.Character.HumanoidRootPart
+            local myRoot = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+            if myRoot then
+                local distance = (myRoot.Position - humanoidRootPart.Position).Magnitude
+                if distance <= 3000 then
+                    data.billboard.Enabled = true
+                    data.highlight.Enabled = true
+                    local text = ""
+                    if _G.Settings.ShowNames then
+                        text = player.Name
+                    end
+                    if _G.Settings.ShowDistance then
+                        text = text .. " [" .. math.floor(distance) .. " studs]"
+                    end
+                    data.label.Text = text
+                    -- Update text color based on team
+                    if player.Team == LocalPlayer.Team then
+                        data.label.TextColor3 = Color3.new(0, 1, 0) -- Green for teammates
+                    else
+                        data.label.TextColor3 = Color3.new(1, 0, 0) -- Red for enemies
+                    end
+                else
+                    data.billboard.Enabled = false
+                    data.highlight.Enabled = false
+                end
+            else
+                data.billboard.Enabled = false
+                data.highlight.Enabled = false
+                print("Local player's HumanoidRootPart not found")
+            end
+        else
+            data.billboard.Enabled = false
+            data.highlight.Enabled = false
+            print("Player " .. player.Name .. " has no valid character")
+        end
+    end
+end
+
+-- Update ESP every frame for continuous updates
+RunService.Heartbeat:Connect(function()
+    updateBillboards()
+end)
+
+-- Handle new players
+Players.PlayerAdded:Connect(function(player)
+    if player ~= LocalPlayer then
+        player.CharacterAdded:Connect(function(char)
+            local humanoidRootPart = char:WaitForChild("HumanoidRootPart", 5)
+            if humanoidRootPart then
+                local billboard, label, highlight = createESP(player)
+                billboard.Adornee = humanoidRootPart
+                billboard.Parent = char
+                highlight.Adornee = char
+                highlight.Parent = char
+                billboards[player] = { billboard = billboard, label = label, highlight = highlight }
+                print("Added ESP for new player: " .. player.Name .. " (Team: " .. (player.Team and player.Team.Name or "No Team") .. ")")
+            else
+                print("Failed to add ESP for player: " .. player.Name)
+            end
+        end)
+    end
+end)
+
+-- Handle players leaving
+Players.PlayerRemoving:Connect(function(player)
+    if billboards[player] then
+        billboards[player].billboard:Destroy()
+        billboards[player].highlight:Destroy()
+        billboards[player] = nil
+        print("Removed ESP for player: " .. player.Name)
+    end
+end)
+```
