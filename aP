@@ -1,115 +1,182 @@
+-- SETTINGS
 _G.Settings = {
+    Enabled = true,
     ShowNames = true,
-    ShowDistance = true
+    ShowDistance = true,
+    EnableTracer = true,
+    TracerThickness = 1,
+    TracerColor = Color3.fromRGB(255, 0, 0),
+    TracerTransparency = 0.8,
 }
 
-local RunService = game:GetService("RunService")
 local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
 local LocalPlayer = Players.LocalPlayer
+local Camera = workspace.CurrentCamera
 
--- Hàm tạo BillboardGui và Highlight
-local function createESP(name)
+local ESPObjects = {}
+
+local function createESP(player)
+    -- Billboard
     local billboard = Instance.new("BillboardGui")
     billboard.Size = UDim2.new(0, 200, 0, 50)
     billboard.AlwaysOnTop = true
-    billboard.StudsOffset = Vector3.new(0, 3.5, 0) -- Đặt billboard phía trên đầu
+    billboard.StudsOffset = Vector3.new(0, 50, 0) -- nâng lên 50 studs
 
     local textLabel = Instance.new("TextLabel")
     textLabel.Size = UDim2.new(1, 0, 1, 0)
     textLabel.BackgroundTransparency = 1
     textLabel.TextColor3 = Color3.new(1, 1, 1)
     textLabel.Font = Enum.Font.SourceSansBold
-    textLabel.TextSize = 10
-    textLabel.Text = name
+    textLabel.TextSize = 10 -- chữ size 10
+    textLabel.Text = player.Name
     textLabel.Parent = billboard
 
+    -- Highlight (chỉ viền)
     local highlight = Instance.new("Highlight")
-    highlight.FillColor = Color3.new(0, 1, 0) -- Màu xanh lá cho phần tô
-    highlight.OutlineColor = Color3.new(0, 1, 0) -- Màu viền
-    highlight.FillTransparency = 0.9
-    highlight.OutlineTransparency = 0.2
-    highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop -- Hiển thị xuyên vật thể
+    highlight.FillTransparency = 1 -- ẩn toàn bộ bên trong
+    highlight.OutlineTransparency = 0 -- viền rõ
+    highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
 
-    return billboard, textLabel, highlight
+    -- Màu highlight theo team
+    if player.Team then
+        highlight.OutlineColor = player.TeamColor.Color
+    else
+        highlight.OutlineColor = Color3.fromRGB(0, 255, 0)
+    end
+
+    -- Tracer bằng Drawing
+    local tracer = Drawing.new("Line")
+    tracer.Visible = false
+    tracer.Color = _G.Settings.TracerColor
+    tracer.Thickness = _G.Settings.TracerThickness
+    tracer.Transparency = _G.Settings.TracerTransparency
+
+    return billboard, textLabel, highlight, tracer
 end
 
--- Tạo bảng ESP cho mỗi người chơi
-local billboards = {}
-
-for _, player in ipairs(Players:GetPlayers()) do
-    if player ~= LocalPlayer and player.Character then
-        local humanoidRootPart = player.Character:WaitForChild("HumanoidRootPart")
-        local billboard, label, highlight = createESP(player.Name)
-        billboard.Adornee = humanoidRootPart
-        billboard.Parent = player.Character
-        highlight.Adornee = player.Character -- Highlight áp dụng cho toàn bộ nhân vật
-        highlight.Parent = player.Character
-        billboards[player] = { billboard = billboard, label = label, highlight = highlight }
+local function removeESP(player)
+    if ESPObjects[player] then
+        local obj = ESPObjects[player]
+        obj.billboard:Destroy()
+        obj.highlight:Destroy()
+        obj.tracer:Remove()
+        ESPObjects[player] = nil
     end
 end
 
--- Hàm cập nhật ESP
-local function updateBillboards()
-    for player, data in pairs(billboards) do
-        if player.Character and player.Character:FindFirstChild("HumanoidRootPart") then
-            local humanoidRootPart = player.Character.HumanoidRootPart
-            local myRoot = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
-            if myRoot then
-                local distance = (myRoot.Position - humanoidRootPart.Position).Magnitude
-                if distance <= 3000 then
-                    -- Hiển thị billboard và highlight nếu khoảng cách <= 3000 studs
-                    data.billboard.Enabled = true
-                    data.highlight.Enabled = true
-                    local text = ""
-                    if _G.Settings.ShowNames then
-                        text = player.Name
+local function setupESP(player, character)
+    if player == LocalPlayer then return end
+    removeESP(player) -- clear cũ
+
+    local hrp = character:WaitForChild("HumanoidRootPart", 5)
+    local humanoid = character:FindFirstChild("Humanoid")
+    if not hrp or not humanoid then return end
+
+    local billboard, label, highlight, tracer = createESP(player)
+    billboard.Adornee = hrp
+    billboard.Parent = LocalPlayer:WaitForChild("PlayerGui") -- tránh CoreGui
+    highlight.Adornee = character
+    highlight.Parent = game:GetService("CoreGui")
+
+    ESPObjects[player] = { billboard = billboard, label = label, highlight = highlight, tracer = tracer, hrp = hrp, humanoid = humanoid }
+
+    humanoid.Died:Connect(function()
+        removeESP(player)
+    end)
+end
+
+local function updateESP()
+    if not _G.Settings.Enabled then
+        for _, obj in pairs(ESPObjects) do
+            obj.billboard.Enabled = false
+            obj.highlight.Enabled = false
+            obj.tracer.Visible = false
+        end
+        return
+    end
+
+    local myHRP = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+    if not myHRP then
+        for _, obj in pairs(ESPObjects) do
+            obj.billboard.Enabled = false
+            obj.highlight.Enabled = false
+            obj.tracer.Visible = false
+        end
+        return
+    end
+
+    for player, obj in pairs(ESPObjects) do
+        local hrp = obj.hrp
+        local humanoid = obj.humanoid
+        if humanoid and humanoid.Health > 0 and hrp then
+            local dist = (myHRP.Position - hrp.Position).Magnitude
+            if dist <= 3000 then
+                obj.billboard.Enabled = true
+                obj.highlight.Enabled = true
+                local text = ""
+                if _G.Settings.ShowNames then text = player.Name end
+                if _G.Settings.ShowDistance then
+                    text = text .. (text ~= "" and " [" or "[") .. math.floor(dist) .. " studs]"
+                end
+                obj.label.Text = text
+
+                -- Update Tracer
+                if _G.Settings.EnableTracer then
+                    local rootPos, onScreen = Camera:WorldToViewportPoint(hrp.Position)
+                    local screenBottom = Vector2.new(Camera.ViewportSize.X / 2, Camera.ViewportSize.Y)
+                    if onScreen then
+                        obj.tracer.From = screenBottom
+                        obj.tracer.To = Vector2.new(rootPos.X, rootPos.Y)
+                        obj.tracer.Visible = true
+                    else
+                        obj.tracer.Visible = false
                     end
-                    if _G.Settings.ShowDistance then
-                        text = text .. " [" .. math.floor(distance) .. " studs]"
-                    end
-                    data.label.Text = text
                 else
-                    -- Ẩn billboard và highlight nếu khoảng cách > 3000 studs
-                    data.billboard.Enabled = false
-                    data.highlight.Enabled = false
+                    obj.tracer.Visible = false
                 end
             else
-                data.billboard.Enabled = false
-                data.highlight.Enabled = false
+                obj.billboard.Enabled = false
+                obj.highlight.Enabled = false
+                obj.tracer.Visible = false
             end
         else
-            data.billboard.Enabled = false
-            data.highlight.Enabled = false
+            removeESP(player)
         end
     end
 end
 
--- Cập nhật mỗi giây
-coroutine.wrap(function()
-    while true do
-        updateBillboards()
-        wait(0.25) -- Chờ 0.25 giây trước khi cập nhật lại
+for _, player in ipairs(Players:GetPlayers()) do
+    if player ~= LocalPlayer then
+        player.CharacterAdded:Connect(function(char)
+            setupESP(player, char)
+        end)
+        if player.Character then
+            setupESP(player, player.Character)
+        end
     end
-end)()
+end
 
--- Nếu người chơi mới vào game
 Players.PlayerAdded:Connect(function(player)
-    player.CharacterAdded:Connect(function(char)
-        local humanoidRootPart = char:WaitForChild("HumanoidRootPart")
-        local billboard, label, highlight = createESP(player.Name)
-        billboard.Adornee = humanoidRootPart
-        billboard.Parent = char
-        highlight.Adornee = char -- Highlight áp dụng cho toàn bộ nhân vật
-        highlight.Parent = char
-        billboards[player] = { billboard = billboard, label = label, highlight = highlight }
-    end)
-end)
-
--- Nếu người chơi rời game
-Players.PlayerRemoving:Connect(function(player)
-    if billboards[player] then
-        billboards[player].billboard:Destroy()
-        billboards[player].highlight:Destroy()
-        billboards[player] = nil
+    if player ~= LocalPlayer then
+        player.CharacterAdded:Connect(function(char)
+            setupESP(player, char)
+        end)
     end
 end)
+
+Players.PlayerRemoving:Connect(function(player)
+    removeESP(player)
+end)
+
+RunService.RenderStepped:Connect(updateESP)
+
+-- Toggle bằng phím T
+UserInputService.InputBegan:Connect(function(input, isProcessed)
+    if isProcessed then return end
+    if input.KeyCode == Enum.KeyCode.T then
+        _G.Settings.Enabled = not _G.Settings.Enabled
+    end
+end)
+
